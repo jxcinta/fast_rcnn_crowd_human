@@ -1,4 +1,4 @@
-This project aims to create a fast rcnn from scratch for person detection using the crowd human dataset. The project is still being developed currently and only classifies based on generated anchors. Sources that aided me during this process are:
+This project aims to create a end-to-end fast rcnn from scratch for person detection using the crowd human dataset. The project is still being developed currently and only classifies based on generated anchors. Sources that aided me during this process are:
 
 https://www.youtube.com/watch?v=JWhkaHPUGnA&ab_channel=EngineeringAI
 
