@@ -9,6 +9,7 @@ from utils import *
 
 
 class FeatureExtractor(nn.Module):
+    '''resnet pretrained feature extractor for images'''
     def __init__(self):
         super().__init__()
         model = torchvision.models.resnet50(pretrained=True)
@@ -21,6 +22,7 @@ class FeatureExtractor(nn.Module):
         return self.backbone(img_data)
     
 class ClassificationModule(nn.Module):
+    '''classifies images of variable input size'''
     def __init__(self, out_channels, n_classes, roi_size, hidden_dim=512, p_dropout=0.3):
         super().__init__()       
        
@@ -65,6 +67,8 @@ class ClassificationModule(nn.Module):
         return cls_loss
     
 class Detector(nn.Module):
+    '''whole model. Generates anchors and feeds them into a classifer for classification. 
+    Returns classes of all generated anchors'''
     def __init__(self, img_size, out_size, out_channels, n_classes, roi_size):
         super().__init__()
         

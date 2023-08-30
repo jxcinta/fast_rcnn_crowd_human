@@ -11,6 +11,16 @@ from tqdm import tqdm
 from matplotlib.pyplot import cm
 
 def filter_aspect_ratio(path, aspect_max, aspect_min):
+    '''filter for images with a particular aspect ratio
+    Input
+    ------
+    path: (str) path to coco format images details - has keys images, annotations and categories where images json contains image file, width and height
+    aspect_max: (float) max aspect ratio to filter for
+    aspect_min: (float) min aspect ratio to filter for
+    
+    Returns
+    -------
+    dataframe object from the coco formated data for the images key with the filtered aspect ratio'''
 
     f = open(path)
     data = json.load(f)
@@ -19,6 +29,20 @@ def filter_aspect_ratio(path, aspect_max, aspect_min):
     return df_images.loc[(df_images['aspect_ratio'] < aspect_max) & (df_images['aspect_ratio'] > aspect_min)]
 
 def resize_image(img_path, bboxes, img_dim, max_objects):
+    ''''resizes image to a given dimensions alonf with their respective bounding boxes
+    Input
+    -----
+    img_path: (str) path to the image file
+    bboxes: (arr) (N, 4) array of bounding boxes for a given image
+    img_dim: (tuple) new dimensions of image
+    max_objects: (int) max objects/bounding boxes for a given image
+
+    Returns
+    -------
+    img_tensor: (Torch.tensor) tensor of the image which been resized - channels are first
+    bboxes_resized: (arr) (N, 4) array which has been resized according to the image
+    
+    '''
 
     height_resize, width_resize = img_dim
     image = io.imread(img_path)  
@@ -43,16 +67,36 @@ def resize_image(img_path, bboxes, img_dim, max_objects):
 
     return img_tensor, bboxes_resized
 
-def load_dataset(df_images, path, img_dir, max_objects, img_dim):#is_train=True
+def load_dataset(path, img_dir, max_objects, img_dim, df_images=None):
+    '''loads in crowd human dataset - gets the classes, ground truth bounding boxes and images
+    Input
+    -----
+    path: (str) path to the annotations in coco format
+    img_dir: (str) path to the image directory
+    max_objects: (int) max bounding boxes per image (for padding)
+    img_dim: (tuple) image dimensions
+    df_images: (dataframe, optional) pandas dataframe of the images json in the coco dataset.
+                contains file_name, id, height, width 
+    Returns
+    -------
+    gt_boxes_all: (Torch.tensor) (batch_size, N, max_objects, 4) tensor which contains the ground truth bounding 
+                   boxes for the image dataste
+    gt_classes_all: (Torch.tensor) (batch_size, N, max_objects) tensor which contains the ground truth classes 
+                    for the image dataset bounding boxes
+    img_data_all: (arr) (batch-size, n_images, img channels, img height, img width) array of image tensors in a batch
+    '''
 
     f = open(path)
     data = json.load(f)
     df_annot =  pd.json_normalize(data['annotations'])
+    if df_images == None:
+        df_images =  pd.json_normalize(data['images'])
+    
     image_list =  df_images['file_name'].values
 
     gt_boxes_all = [] #shape (B, n_images, max_objects, 4]
     gt_classes_all = [] #shape(B, n_images, max_objects) (all filled with ones)
-    img_data_all = [] #shape [B, n_images]
+    img_data_all = [] #shape [B, n_images, img_dimensions]
 
     for image in tqdm(image_list[0:200]):
         
@@ -72,6 +116,17 @@ def load_dataset(df_images, path, img_dir, max_objects, img_dim):#is_train=True
     return  gt_boxes_all, gt_classes_all, img_data_all
 
 def display_img(img_data, fig, axes):
+    '''plots a batch of images
+    Input
+    -----
+    img_data: (arr) array of images tensors with channels first
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting
+    
+    Returns
+    -------
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting'''
 
     for i, img in enumerate(img_data):
         if type(img) == torch.Tensor:
@@ -80,13 +135,28 @@ def display_img(img_data, fig, axes):
     
     return fig, axes
 
-def display_bbox(bboxes, fig, ax, classes=None, in_format='xyxy', color='y', line_width=3):
+def display_bbox(bboxes, fig, ax, in_format='xyxy', color='y', line_width=3):
+    '''plots bounding boxes
+
+    Input
+    -----
+    bboxes: (arr) (B, N, 4) array of bounding boxes
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting
+    in_format: (str) options xyxy or xywh to convert between the two for plotting
+    color: (str) color code or 'vary' which creates a range of colors
+    line_width: (int) line width for plotting
+      
+    Returns
+    -------
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting'''
 
 
     if type(bboxes) == np.ndarray:
         bboxes = torch.from_numpy(bboxes)
-    if classes:
-        assert len(bboxes) == len(classes)
+    if in_format:
+        assert in_format == 'xyxy' or in_format == 'xywh'
 
     if in_format == 'xyxy':
         #convert boxes to xywh format
@@ -106,6 +176,20 @@ def display_bbox(bboxes, fig, ax, classes=None, in_format='xyxy', color='y', lin
     return fig, ax
 
 def display_grid(x_points, y_points, fig, ax, special_point=None):
+    '''plots a grid along an axes
+    Input
+    -----
+    x_points: (arr) array of x values for the grid to plot along
+    y_points: (arr) array of y values for the grid to be plot along
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting
+    special_point: (tuple) (x,y) value for a particular grid point to be highlighted
+
+    Returns
+    -------
+    fig: (matplotlib.figure) figure used for plotting
+    axes: (matplotlib.axes) axes used for plotting
+    '''
     # plot grid
     for x in x_points:
         for y in y_points:
@@ -119,6 +203,16 @@ def display_grid(x_points, y_points, fig, ax, special_point=None):
     return fig, ax
 
 def gen_anc_centers(out_size):
+    '''generates anchor points to create a grid on an image
+    Inputs
+    ------
+    out_size: (tuple) dimensions of height and width
+
+    Returns
+    -------
+    anc_pts_x: (arr) array of anchor points in x axis
+    anc_pts_y: (arr) array of anchor points in y axis
+    '''
     out_h, out_w = out_size
     
     anc_pts_x = torch.arange(0, out_w) +0.5
@@ -127,6 +221,20 @@ def gen_anc_centers(out_size):
     return anc_pts_x, anc_pts_y
 
 def gen_anc_base(anc_pts_x, anc_pts_y, anc_scales, anc_ratios, out_size):
+    '''generates anchors for each anchor point
+    Input
+    -----
+    anc_pts_x: (arr) array of values for which are the grid/anchor points along x axis
+    anc_pts_y: (arr) array of values for which are the grid/anchor points along y axis
+    anc_scales: (arr) the scale of the anchor/generated bounding box size
+    anc_ratios: (arr) the apect ratio of the anchor/generated bounding box
+    out_size: (tuple) out height and width
+
+    Returns
+    -------
+    anc_base: (arr) (1, X, Y, N, 4) array of every single generated bounding box for an image
+    
+    '''
     n_anc_boxes = len(anc_scales) * len(anc_ratios)
     anc_base = torch.zeros(1, anc_pts_x.size(dim=0) \
                               , anc_pts_y.size(dim=0), n_anc_boxes, 4) # shape - [1, Hmap, Wmap, n_anchor_boxes, 4]
@@ -153,10 +261,23 @@ def gen_anc_base(anc_pts_x, anc_pts_y, anc_scales, anc_ratios, out_size):
     return anc_base
 
 def bboxes_to_nearest_anchors(bboxes, anc_pts_x_proj, anc_pts_y_proj, in_format='xywh'):
+    '''moves groun truth bounding boxes to the closest anchor points
+    Input
+    ------
+    bboxes: (arr) array of bounding boxes (max_objects, N, 4)
+    anc_pts_x_proj: (arr) anchor points projected to ground truth image dimensions in x
+    anc_pts_y_proj: (arr) anchor points projected to ground truth image dimensions in y
+    in_format: (str) either xywh or xyxy - transforms bboxes coordiates to xyxy if in xywh
+
+    Returns
+    -------
+    proj_bboses: (arr) (max_objects, N, 4) array of bounding boxes that have been adjusted to the 
+                  nearest grid points'''
     proj_bboxes = bboxes.clone()
     invalid_bbox_mask = (proj_bboxes == -1) 
 
     def find_nearest(array, value):
+        '''finds nearest value in an array'''
         array = np.asarray(array)
         idx = (np.abs(array - value)).argmin()
         return array[idx]
@@ -180,7 +301,18 @@ def bboxes_to_nearest_anchors(bboxes, anc_pts_x_proj, anc_pts_y_proj, in_format=
 
 
 def project_bboxes(bboxes, w_scale, h_scale, in_format='xywh', mode='a2p'):
-    'scales bboxes '
+    ''' scales bboxes up or down and converts them to [xmin ymin xmax ymax] format
+    Input
+    -----
+    bboxes: (arr) array of bounding boxes
+    w_scale: (int) scale for width
+    h_scale: (int) scale for height
+    in_format: (str) either xywh or xyxy to denote how the bounding boxes are described
+    mode: (str) either a2p or p2a where a2s scales up and p2a scales down
+
+    Returns
+    -------
+    proj_bboxes: (arr) array of projected bounding boxes'''
     proj_bboxes = bboxes.clone().reshape(bboxes.size(dim=0), -1, 4) #reshaping to format (B, n_ground_truth_bbox, 4)
     invalid_bbox_mask = (proj_bboxes == -1) 
 
@@ -206,6 +338,18 @@ def project_bboxes(bboxes, w_scale, h_scale, in_format='xywh', mode='a2p'):
     return proj_bboxes
 
 def get_IoU_matrix(n_images, anc_boxes_all, gt_bboxes_all, tot_anc_boxes):
+    '''calculates IoU matrix between ground truth bounding boxes and all anchor boxes
+    Input
+    -----
+    n_images: (int) batch size
+    anc_boxes_all: (Torch.tensor) tensor of all anchor boxes (B, w_amap, h_amap, max_objects, 4) 
+    gt_bboxes_all: (Torch.tensor) tensor of all ground truth bounding boxes
+    tot_anc_boxes: (int) total number of generated bounding boxes
+
+    Returns
+    -------
+    IoU_mat: (arr) calculates IoU matrix
+    '''
     #gt_bboxes_al are all of the corrected anchor boxes
     #anc_boxes_all is every single anchor box ever
 
@@ -221,6 +365,17 @@ def get_IoU_matrix(n_images, anc_boxes_all, gt_bboxes_all, tot_anc_boxes):
     return IoU_mat
 
 def IoU_matrix_conditions(IoU_matrix, threshold, max_iou_per_box,  type='positive'):
+    '''conditions that returns anchor boxes that sufficiently overlap (or don't) with ground truth bboxes
+    Input
+    -----
+    IoU_matrix: (arr) IoU_matrix
+    threshold: (int) threshold for IoU score
+    max_iou_per_box: (arr) array which has the index of the max IoU per ground truth box
+    type: (str) whether its a positive or negative box (i.e. a box that overlaps sufficiently or doesn't overlap sufficiently)
+
+    Returns
+    -------
+    anc_max: mask of IoU box for values which fit the conditions'''
 
 
     if type=='positive':
@@ -235,6 +390,28 @@ def IoU_matrix_conditions(IoU_matrix, threshold, max_iou_per_box,  type='positiv
     return anc_mask
 
 def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7, neg_thresh=0.2):
+    ''' gets the required anchors that have the generated bounding boxes that either are sufficiently
+    overlapping or not overlapping
+    Input
+    -----
+    anc_boxes_all: (Torch.tensor) tensor of all generated bounding boxes across an image (B, w_amap, h_amap, max_objects, 4) 
+    gt_bboxes_all: (Torch.tensor) of all ground truth bounding boxes (B, max_objects, 4) 
+    gt_clases_all: (Torch.tensor) of classes for respective bounding boxes (B, max_objects)
+    pos_thresh: (int) positive threshold for IoU overlap
+    neg_thesh: (int) negative threshold for IoU overlap
+    
+    Returns
+    -------
+    positive_anc_ind: (torch.Tensor) of shape (n_pos,)
+        flattened positive indices for all the images in the batch
+    negative_anc_ind: torch.Tensor of shape (n_pos,)
+        flattened positive indices for all the images in the batch
+    GT_conf_scores: torch.Tensor of shape (n_pos,), IoU scores of +ve anchors
+    GT_class_pos: torch.Tensor of shape (n_pos,)
+        mapped classes of +ve anchors
+    positive_anc_coords: (n_pos, 4) coords of +ve anchors (for visualization)
+    negative_anc_coords: (n_pos, 4) coords of -ve anchors (for visualization)
+    positive_anc_ind_sep: list of indices to keep track of +ve anchors'''
 
     #gt_bboxes_al are all of the corrected anchor boxes
     #anc_boxes_all is every single anchor box ever
@@ -249,7 +426,7 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     IoU_mat =  get_IoU_matrix(B, anc_boxes_all, gt_bboxes_all, tot_anc_boxes)
 
     #finds the max of any given anchor in all anchors for a given image
-    max_iou_per_gt_box, _ = IoU_mat.max(dim=1, keepdim=True) #finds the max of any given anchor in all anchors for a given image
+    max_iou_per_gt_box, _ = IoU_mat.max(dim=1, keepdim=True) 
     max_iou_per_anc, max_iou_per_anc_ind = IoU_mat.max(dim=-1) 
     max_iou_per_anc = max_iou_per_anc.flatten(start_dim=0, end_dim=1)
 
