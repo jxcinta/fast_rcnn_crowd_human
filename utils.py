@@ -9,6 +9,7 @@ from skimage.transform import resize
 import pandas as pd
 from tqdm import tqdm
 from matplotlib.pyplot import cm
+import matplotlib.pyplot as plt
 
 def filter_aspect_ratio(path, aspect_max, aspect_min):
     '''filter for images with a particular aspect ratio
@@ -89,7 +90,8 @@ def load_dataset(path, img_dir, max_objects, img_dim, df_images=None):
     f = open(path)
     data = json.load(f)
     df_annot =  pd.json_normalize(data['annotations'])
-    if df_images == None:
+
+    if not isinstance(df_images, pd.DataFrame):
         df_images =  pd.json_normalize(data['images'])
     
     image_list =  df_images['file_name'].values
@@ -201,6 +203,42 @@ def display_grid(x_points, y_points, fig, ax, special_point=None):
         ax.scatter(x, y, color="red", marker='+')
         
     return fig, ax
+
+def verify_dataset_classes(proj_anchors, anc_boxes_all, img_data_all, feature_extracted_data, positive_anc_ind):
+    '''function that plots the anchor and class associated with it based on IoU scores to verify a good dataset 
+    has been made based on the generated anchors
+    Input
+    -----
+    proj_anchors: (torch.Tensor) tensor of the projected generated anchors
+    anc_boxes_all: (torch.Tensor) tensor of the generated anchors
+    img_data_all: (arr) array of image data that has channels first
+    feature_extracted_data: (arr) arr of image data that has had its features extracted by a resent model
+    positive_anc_ind: (torch.Tensor) a tensor of the indexes of anc_boxes_all which have sufficient IoU score
+    Returns
+    -------
+    plotted figures
+    '''
+
+    anc_boxes_all_flat = anc_boxes_all.reshape(len(img_data_all), -1, 4)
+    proj_boxes_all_flat = proj_anchors.reshape(len(img_data_all), -1, 4)
+
+    classes_all = np.zeros((anc_boxes_all_flat.shape[0] * anc_boxes_all_flat.shape[1],))
+    classes_all[positive_anc_ind] = 1
+    classes_all =  classes_all.reshape(2, -1)
+    class_dict = {1.0: 'person', 0.0: 'background'}
+
+    for index, (gt_image, feature_extracted_img) in enumerate(zip(img_data_all, feature_extracted_data)):
+        for (anchor, proj_anchor, category) in zip(anc_boxes_all_flat[index][290:305], proj_boxes_all_flat[index][290:305], classes_all[index][290:305]):
+            #plot
+            nrows, ncols = (1, 2)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(16, 8))
+            #put ground truth and feature extracted next to each other
+            images = [gt_image, feature_extracted_img]
+            fig, axes = display_img(images, fig, axes)
+            axes[0].set_title('class: ' + class_dict[category])
+            #display anchors on each image
+            fig, _ = display_bbox(np.array([proj_anchor]), fig, axes[0], color='vary', in_format='xyxy')
+            fig, _ = display_bbox(np.array([anchor]), fig, axes[1], color='vary', in_format='xyxy')
 
 def gen_anc_centers(out_size):
     '''generates anchor points to create a grid on an image
