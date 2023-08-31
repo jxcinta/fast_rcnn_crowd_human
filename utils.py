@@ -228,7 +228,7 @@ def verify_dataset_classes(proj_anchors, anc_boxes_all, img_data_all, feature_ex
     class_dict = {1.0: 'person', 0.0: 'background'}
 
     for index, (gt_image, feature_extracted_img) in enumerate(zip(img_data_all, feature_extracted_data)):
-        for (anchor, proj_anchor, category) in zip(anc_boxes_all_flat[index][290:305], proj_boxes_all_flat[index][290:305], classes_all[index][290:305]):
+        for (anchor, proj_anchor, category) in zip(anc_boxes_all_flat[index][293:296], proj_boxes_all_flat[index][293:296], classes_all[index][293:296]):
             #plot
             nrows, ncols = (1, 2)
             fig, axes = plt.subplots(nrows, ncols, figsize=(16, 8))
