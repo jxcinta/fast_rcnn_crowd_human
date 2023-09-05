@@ -100,7 +100,7 @@ def load_dataset(path, img_dir, max_objects, img_dim, df_images=None):
     gt_classes_all = [] #shape(B, n_images, max_objects) (all filled with ones)
     img_data_all = [] #shape [B, n_images, img_dimensions]
 
-    for image in tqdm(image_list[0:200]):
+    for image in tqdm(image_list[0:50]):
         
         img_path = img_dir  + image
         img_id = df_images.loc[df_images['file_name'] == image, 'id'].item()
@@ -421,13 +421,19 @@ def IoU_matrix_conditions(IoU_matrix, threshold, max_iou_per_box,  type='positiv
         # condition 2: anchor boxes with iou above a threshold with any of the gt bboxes
         anc_mask = torch.logical_or(anc_mask, IoU_matrix > threshold) #and that you keep anything over positive threshold
     elif type=='negative':
-        anc_mask = (max_iou_per_box < threshold)
+        basic_anc_mask = (IoU_matrix < threshold)
+        anc_mask = torch.zeros_like(basic_anc_mask)
+        #ensure negative mask has low IoU for all gt boxes not just relative to one
+        for img_idx, image in enumerate(basic_anc_mask):
+            for index, row in enumerate(image):
+                if row.all() == True:
+                    anc_mask[img_idx][index, :] = 1
     else:
         raise ValueError('Invalid input `type`. Options are `positive` or `negative`.')
 
     return anc_mask
 
-def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7, neg_thresh=0.2):
+def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7, neg_thresh=0.2, return_all_negative_boxes=False):
     ''' gets the required anchors that have the generated bounding boxes that either are sufficiently
     overlapping or not overlapping
     Input
@@ -476,11 +482,18 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     positive_anc_col = torch.where(positive_anc_mask)[1]#to know which column an achor of positive value came from i.e. which ground truth box it is associated with
     positive_anc_coords = torch.stack([torch.FloatTensor(anc_boxes_all_flat[i,:]) for i in positive_anc_ind])
 
-    negative_anc_mask = IoU_matrix_conditions(IoU_mat, pos_thresh, max_iou_per_anc, type='negative')
+    negative_anc_mask = IoU_matrix_conditions(IoU_mat, neg_thresh, max_iou_per_anc, type='negative')
+    negative_anc_ind_sep = torch.where(negative_anc_mask)[0]
 
+    negative_anc_mask = negative_anc_mask.flatten(start_dim=0, end_dim=1) 
     negative_anc_ind = torch.where(negative_anc_mask)[0]
-    negative_anc_ind = negative_anc_ind[torch.randint(0, negative_anc_ind.shape[0], (positive_anc_ind.shape[0],))]
-    negative_anc_coords = torch.stack([torch.FloatTensor(anc_boxes_all_flat[i,:]) for i in negative_anc_ind])
+
+    if return_all_negative_boxes == False:
+        random_ints = torch.randint(0, negative_anc_ind.shape[0], (positive_anc_ind.shape[0],))
+        negative_anc_ind = negative_anc_ind[random_ints] 
+        negative_anc_ind_sep = negative_anc_ind_sep[random_ints]
+
+    negative_anc_coords = torch.stack([torch.Tensor(anc_boxes_all_flat[i,:]) for i in negative_anc_ind.long()])
     
 
     GT_conf_scores = max_iou_per_anc[positive_anc_ind]
@@ -488,4 +501,47 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     gt_bboxes_all_flat = gt_bboxes_all.reshape(-1, 4)
     GT_bboxes_pos = torch.stack([torch.FloatTensor(gt_bboxes_all_flat[i,:]) for i in positive_anc_col])
 
-    return positive_anc_ind, negative_anc_ind, GT_conf_scores, GT_class_pos, positive_anc_coords, negative_anc_coords, positive_anc_ind_sep, GT_bboxes_pos
+    return positive_anc_ind, negative_anc_ind, GT_conf_scores, GT_class_pos, positive_anc_coords, negative_anc_coords, positive_anc_ind_sep, negative_anc_ind_sep, GT_bboxes_pos
+
+def get_labelled_data(positive_anc_ind, positive_anc_ind_sep, batch_size, negative_anc_ind, negative_anc_ind_sep, anc_boxes_all_flat):
+    '''gets the positive and negative anchor indicies and creates a training dataset of bboxes out of it along with classes which is also
+    batch seperated. This data is also shuffled to make its order random
+    Input
+    -----
+    positive_anc_ind: (torch.Tensor) tensor of indicies for anc_boxes_all_flat i.e. list of all anchor boxes of that have a IoU score above positive threshold
+    positive_anc_ind_sep: (torch.Tensor) tensor, same legnth as positive_anc_ind that indicates which image in the batch  it belongs to by index
+    batch_size: (int) number of images in a batch
+    negative_anc_ind: (torch.Tensor) tensor of indicies for anc_boxes_all_flat that have a IoU score below negative threshold
+    negative_anc_ind_sep: (torch.Tensor) tensor, same legnth as positive_anc_ind that indicates which image in the batch  it belongs to by index
+    anc_boxes_all_flat: (np.ndarray) (n_anchors, 4) array of every bounding box in for an image 
+
+    Returns
+    --------
+    anchor_list: (list) (batch_size, n_bboxes, 4) list of sufficiently positive anchors and negative anchors by image, shuffled 
+    classes_list: (list) (n_bboxes, ) list of classes correlated with anchor_list'''
+    anchor_list = []
+    classes_list=[]
+
+    #to keep the number of anchors per batch homogenous 
+    min_length = min([len(positive_anc_ind[(positive_anc_ind_sep == idx)]) for idx in range(batch_size)])
+
+    for idx in range(batch_size):  
+        #get both positive and negative anchors and combine into one datatset, seperated by batch
+        positive_anchors_current_batch = positive_anc_ind[(positive_anc_ind_sep == idx)][:min_length]
+        negative_anchors_current_batch = negative_anc_ind[(negative_anc_ind_sep == idx)][:min_length]
+        positive_anchors = anc_boxes_all_flat[positive_anchors_current_batch]
+        negative_anchors = anc_boxes_all_flat[negative_anchors_current_batch]
+        total_anchors = torch.cat((positive_anchors, negative_anchors))
+
+        classes = np.zeros((len(total_anchors), 1))
+        classes[:len(positive_anchors_current_batch), :] =  1
+
+        #to mix up the positive and negtaive classes so that they aren't split 50-50
+        random_ints = torch.randperm(total_anchors.shape[0])
+        total_anchors = total_anchors[random_ints]
+        classes = classes[random_ints]
+        anchor_list.append(total_anchors)
+        classes_list.append(classes)
+
+    return anchor_list, classes_list
+

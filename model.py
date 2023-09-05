@@ -6,13 +6,13 @@ import torch.optim as optim
 import torch.nn as nn
 import numpy as np
 from utils import *
-
+import itertools
 
 class FeatureExtractor(nn.Module):
     '''resnet pretrained feature extractor for images'''
     def __init__(self):
         super().__init__()
-        model = torchvision.models.resnet50(pretrained=True)
+        model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V1)
         req_layers = list(model.children())[:8]
         self.backbone = nn.Sequential(*req_layers)
         for param in self.backbone.named_parameters():
@@ -86,7 +86,7 @@ class Detector(nn.Module):
         
         # IoU thresholds for +ve and -ve anchors
         self.pos_thresh = 0.7
-        self.neg_thresh = 0.3
+        self.neg_thresh = 0.02
 
         self.feature_extractor = FeatureExtractor()
         self.classifier = ClassificationModule(out_channels, n_classes, roi_size)
@@ -107,19 +107,25 @@ class Detector(nn.Module):
         anc_boxes_all_flat = anc_boxes_all.reshape(-1, 4)
         anc_boxes_sep = anc_boxes_all.reshape(batch_size, anc_boxes_all.size(dim=1)*anc_boxes_all.size(dim=2)*anc_boxes_all.size(dim=3), 4)
 
+        #project anchor boxes to image size, and to nearest anchor points
         anc_boxes_proj = project_bboxes(anc_boxes_all, self.width_scale_factor, self.height_scale_factor, in_format='xyxy')
         gt_bboxes_proj = bboxes_to_nearest_anchors(gt_bboxes, anc_pts_x_proj, anc_pts_y_proj, in_format='xywh') #converetd into xyxy format
 
-        positive_anc_ind, negative_anc_ind, GT_conf_scores, GT_offsets, GT_class_pos, positive_anc_coords, negative_anc_coords, positive_anc_ind_sep, GT_bboxes_pos = get_req_anchors(anc_boxes_proj, gt_bboxes_proj, gt_classes, pos_thresh=0.95, neg_thresh=0.2)
+ 
+        #get positive and negative anchors and indices that seperate them by batch
+        positive_anc_ind, negative_anc_ind, GT_conf_scores,\
+        GT_class_pos, positive_anc_coords, negative_anc_coords, \
+        positive_anc_ind_sep, negative_anc_ind_sep, GT_bboxes_pos = get_req_anchors(anc_boxes_proj, gt_bboxes_proj, 
+                                                                                gt_bboxes,self.pos_thresh, self.neg_thresh, return_all_negative_boxes=False)
+        
+        #combine positive and negative anchors into one set of data with their respectice classes by batch
+        anchor_list, classes_list = get_labelled_data(positive_anc_ind, positive_anc_ind_sep, batch_size, negative_anc_ind, negative_anc_ind_sep, anc_boxes_all_flat)
 
-        classes_flat = np.zeros((anc_boxes_all_flat.size(dim=0), 1))
-        classes_flat[positive_anc_ind, :] = 1
 
-        anchor_list = []
-        for idx in range(batch_size):
-
-            anchors_sep = anc_boxes_sep[idx] 
-            anchor_list.append(anchors_sep)
+        if isinstance(classes_list, list):
+            classes_flat = np.array(list(itertools.chain(*classes_list)))
+        else:
+            classes_flat = np.array(classes_list).reshape(-1, 1)
 
         cls_loss =  self.classifier(feature_map, anchor_list, torch.Tensor(classes_flat))
 
